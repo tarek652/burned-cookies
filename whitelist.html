@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Burned Cookies Whitelist</title>
+  <link rel="stylesheet" href="whitelist.css">
+</head>
+<body>
+  <main>
+    <div class="card">
+      <header>
+        <div>
+          <h1>Burned Cookies Whitelist</h1>
+          <p class="muted">All whitelisted domains grouped by base domain.</p>
+        </div>
+        <div class="buttonRow">
+          <button id="exportList" class="secondary">Export</button>
+          <label class="importButton secondary">
+            Import
+            <input id="importList" type="file" accept="application/json,.json">
+          </label>
+        </div>
+      </header>
+
+      <div class="content">
+        <label for="manualEntry">Add exact domain or wildcard</label>
+        <div class="inputRow">
+          <input id="manualEntry" placeholder="example.com or *.example.com">
+          <button id="addManual" class="primary">Add</button>
+        </div>
+
+        <section>
+          <h2>Full whitelist</h2>
+          <div id="list"></div>
+          <p id="empty" class="muted">No domains whitelisted.</p>
+        </section>
+
+        <p id="status" role="status"></p>
+      </div>
+    </div>
+  </main>
+  <script src="whitelist.js"></script>
+</body>
+</html>

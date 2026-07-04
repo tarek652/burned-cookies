@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Burned Cookies</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <div class="panel">
+      <div class="header">
+        <h1>Burned Cookies</h1>
+      </div>
+
+      <div class="content">
+        <div class="domainCard">
+          <p class="muted">Current domain</p>
+          <p id="currentHost" class="host">Loading…</p>
+        </div>
+
+        <div class="buttonGrid">
+          <button id="addExact" class="primary">Whitelist current</button>
+          <button id="addWildcard" class="primary">Whitelist wildcard</button>
+        </div>
+
+        <label for="manualEntry">Add exact domain or wildcard</label>
+        <div class="inputRow">
+          <input id="manualEntry" placeholder="example.com or *.example.com">
+          <button id="addManual" class="primary">Add</button>
+        </div>
+
+        <section>
+          <div class="sectionHeader">
+            <h2 id="listTitle">Whitelist for current domain</h2>
+            <button id="openFullList" class="secondary">Show all</button>
+          </div>
+          <div class="listBox">
+            <ul id="list"></ul>
+            <p id="empty" class="muted emptyState">No matching whitelist entries.</p>
+          </div>
+        </section>
+
+        <div class="buttonGrid footer">
+          <button id="exportList" class="secondary">Export</button>
+          <label class="importButton secondary">
+            Import
+            <input id="importList" type="file" accept="application/json,.json">
+          </label>
+        </div>
+
+        <p id="status" role="status"></p>
+      </div>
+    </div>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
