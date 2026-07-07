@@ -4,6 +4,12 @@ Burned Cookies is a small Manifest V3 browser extension for Brave and Chromium-b
 
 It is intentionally simple: whitelist the sites you want to keep, and Burned Cookies clears everything else on install, on browser startup, and when the last tab for a non-whitelisted site is closed.
 
+## Installation from Chrome Web Store
+
+You can install Burned Cookies from the Chrome Web Store:
+
+[![Available in the Chrome Web Store](https://developer.chrome.com/static/docs/webstore/branding/image/iNEddTyWiMfLSwFD6qGq.png)](https://chrome.google.com/webstore/detail/ifopkpnjofinfenbgdmjgiflgcfcplad)
+
 ## Features
 
 - Delete all non-whitelisted cookies on extension install.
