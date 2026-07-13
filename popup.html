@@ -1,57 +1,65 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Burned Cookies</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <main>
-    <div class="panel">
-      <div class="header">
+  <main class="popup">
+    <header class="header">
+      <img src="icons/icon48.png" alt="" class="logo">
+      <div>
         <h1>Burned Cookies</h1>
+        <p id="currentDomain" class="muted">Loading current site…</p>
       </div>
+    </header>
 
-      <div class="content">
-        <div class="domainCard">
-          <p class="muted">Current domain</p>
-          <p id="currentHost" class="host">Loading…</p>
-        </div>
-
-        <div class="buttonGrid">
-          <button id="addExact" class="primary">Whitelist current</button>
-          <button id="addWildcard" class="primary">Whitelist wildcard</button>
-        </div>
-
-        <label for="manualEntry">Add exact domain or wildcard</label>
-        <div class="inputRow">
-          <input id="manualEntry" placeholder="example.com or *.example.com">
-          <button id="addManual" class="primary">Add</button>
-        </div>
-
-        <section>
-          <div class="sectionHeader">
-            <h2 id="listTitle">Whitelist for current domain</h2>
-            <button id="openFullList" class="secondary">Show all</button>
-          </div>
-          <div class="listBox">
-            <ul id="list"></ul>
-            <p id="empty" class="muted emptyState">No matching whitelist entries.</p>
-          </div>
-        </section>
-
-        <div class="buttonGrid footer">
-          <button id="exportList" class="secondary">Export</button>
-          <label class="importButton secondary">
-            Import
-            <input id="importList" type="file" accept="application/json,.json">
-          </label>
-        </div>
-
-        <p id="status" role="status"></p>
+    <section class="card">
+      <h2>Current site</h2>
+      <div class="button-row">
+        <button id="addExactButton" type="button">Whitelist domain</button>
+        <button id="addWildcardButton" type="button">Whitelist wildcard</button>
       </div>
-    </div>
+      <p class="hint">Wildcard keeps the base domain and all subdomains.</p>
+    </section>
+
+    <section class="card">
+      <h2>Privacy cleanup</h2>
+      <label class="toggle-row">
+        <input type="checkbox" id="clearSiteDataToggle">
+        <span>
+          <strong>Also clear site data</strong>
+          <small>Default on. Removes localStorage, IndexedDB, Cache Storage, service workers, cache, and more for non-whitelisted sites.</small>
+        </span>
+      </label>
+      <button id="cleanNowButton" type="button" class="secondary">Clean now</button>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <h2>Matching whitelist</h2>
+        <a href="whitelist.html" target="_blank" rel="noreferrer">Manage all</a>
+      </div>
+      <ul id="matchingList" class="list"></ul>
+      <p id="emptyMatching" class="muted hidden">No whitelist entries match this tab.</p>
+    </section>
+
+    <section class="card">
+      <h2>Import / export</h2>
+      <div class="button-row">
+        <button id="exportButton" type="button" class="secondary">Export JSON</button>
+        <label class="file-button secondary">
+          Import JSON
+          <input id="importInput" type="file" accept="application/json,.json">
+        </label>
+      </div>
+    </section>
+
+    <p id="status" class="status" role="status"></p>
   </main>
+
   <script src="popup.js"></script>
 </body>
 </html>

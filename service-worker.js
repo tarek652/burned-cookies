@@ -1,91 +1,93 @@
-const DEFAULTS = { whitelist: [] };
+const DEFAULT_STATE = {
+  whitelist: [],
+  clearSiteData: true,
+  knownOrigins: []
+};
 
-function normalizeHost(host) {
-  return String(host || "")
+const tabUrls = new Map();
+
+function isHttpUrl(url) {
+  return typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://"));
+}
+
+function parseUrl(url) {
+  try {
+    return new URL(url);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function normalizeDomain(domain) {
+  return String(domain || "")
     .trim()
     .toLowerCase()
     .replace(/^\.+/, "")
     .replace(/\.+$/, "");
 }
 
-function hostFromUrl(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    return normalizeHost(parsed.hostname);
-  } catch {
-    return "";
+function normalizeRule(rule) {
+  return String(rule || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
+    .replace(/\.+$/, "");
+}
+
+function getBaseDomain(domain) {
+  const clean = normalizeDomain(domain);
+  const parts = clean.split(".").filter(Boolean);
+  if (parts.length <= 2) {
+    return clean;
   }
+  return parts.slice(-2).join(".");
 }
 
-function normalizeEntry(entry) {
-  let value = String(entry || "").trim().toLowerCase();
-  value = value.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
-  if (value.startsWith("*.")) return "*." + normalizeHost(value.slice(2));
-  return normalizeHost(value);
+function hostnameMatchesRule(hostname, rule) {
+  const host = normalizeDomain(hostname);
+  const cleanRule = normalizeRule(rule);
+
+  if (!host || !cleanRule) {
+    return false;
+  }
+
+  if (cleanRule.startsWith("*.")) {
+    const base = cleanRule.slice(2);
+    return host === base || host.endsWith(`.${base}`);
+  }
+
+  return host === cleanRule;
 }
 
-async function getWhitelist() {
-  const data = await chrome.storage.local.get(DEFAULTS);
-  return Array.isArray(data.whitelist) ? data.whitelist.map(normalizeEntry).filter(Boolean) : [];
+async function getState() {
+  const state = await chrome.storage.local.get(DEFAULT_STATE);
+  return {
+    whitelist: Array.isArray(state.whitelist) ? state.whitelist.map(normalizeRule).filter(Boolean) : [],
+    clearSiteData: state.clearSiteData !== false,
+    knownOrigins: Array.isArray(state.knownOrigins) ? state.knownOrigins.filter(Boolean) : []
+  };
 }
 
-function isWhitelisted(host, whitelist) {
-  host = normalizeHost(host);
-  if (!host) return false;
-
-  return whitelist.some((entry) => {
-    entry = normalizeEntry(entry);
-    if (!entry) return false;
-
-    if (entry.startsWith("*.")) {
-      const base = entry.slice(2);
-      return host === base || host.endsWith("." + base);
-    }
-
-    return host === entry;
-  });
+async function setWhitelist(whitelist) {
+  const clean = [...new Set((whitelist || []).map(normalizeRule).filter(Boolean))].sort();
+  await chrome.storage.local.set({ whitelist: clean });
+  return clean;
 }
 
-function cookieDomain(cookie) {
-  return normalizeHost(cookie.domain || "");
-}
-
-function domainsRelated(a, b) {
-  a = normalizeHost(a);
-  b = normalizeHost(b);
-  if (!a || !b) return false;
-  return a === b || a.endsWith("." + b) || b.endsWith("." + a);
-}
-
-async function rememberTab(tabId, url) {
-  const host = hostFromUrl(url);
-  if (!host) return;
-  await chrome.storage.session.set({ ["tab:" + tabId]: host });
-}
-
-async function forgetTab(tabId) {
-  await chrome.storage.session.remove("tab:" + tabId);
-}
-
-async function getRememberedHost(tabId) {
-  const key = "tab:" + tabId;
-  const data = await chrome.storage.session.get(key);
-  return normalizeHost(data[key]);
-}
-
-async function openHosts() {
-  const tabs = await chrome.tabs.query({});
-  return tabs.map((tab) => hostFromUrl(tab.url || tab.pendingUrl || "")).filter(Boolean);
+async function isDomainWhitelisted(domain) {
+  const { whitelist } = await getState();
+  return whitelist.some((rule) => hostnameMatchesRule(domain, rule));
 }
 
 function cookieUrl(cookie) {
-  const scheme = cookie.secure ? "https://" : "http://";
-  const domain = cookieDomain(cookie);
-  return scheme + domain + (cookie.path || "/");
+  const domain = normalizeDomain(cookie.domain);
+  const scheme = cookie.secure ? "https" : "http";
+  const path = cookie.path || "/";
+  return `${scheme}://${domain}${path}`;
 }
 
-async function deleteCookie(cookie) {
+async function removeCookie(cookie) {
   try {
     await chrome.cookies.remove({
       url: cookieUrl(cookie),
@@ -93,96 +95,239 @@ async function deleteCookie(cookie) {
       storeId: cookie.storeId
     });
   } catch (error) {
-    console.warn("Could not remove cookie", cookie, error);
+    console.warn("Failed to remove cookie", cookie.name, cookie.domain, error);
   }
 }
 
-
-async function cleanupAllNonWhitelistedCookies() {
-  const whitelist = await getWhitelist();
+async function removeNonWhitelistedCookies() {
+  const { whitelist } = await getState();
   const cookies = await chrome.cookies.getAll({});
-  const removals = [];
 
-  for (const cookie of cookies) {
-    const domain = cookieDomain(cookie);
-    if (!domain) continue;
-
-    // Keep cookies covered by exact entries like example.com or wildcard entries like *.example.com.
-    if (isWhitelisted(domain, whitelist)) continue;
-
-    removals.push(deleteCookie(cookie));
-  }
-
-  await Promise.allSettled(removals);
+  await Promise.all(
+    cookies.map(async (cookie) => {
+      const domain = normalizeDomain(cookie.domain);
+      const keep = whitelist.some((rule) => hostnameMatchesRule(domain, rule));
+      if (!keep) {
+        await removeCookie(cookie);
+      }
+    })
+  );
 }
 
-async function cleanupForClosedHost(closedHost) {
-  closedHost = normalizeHost(closedHost);
-  if (!closedHost) return;
-
-  const whitelist = await getWhitelist();
-  const currentlyOpenHosts = await openHosts();
-  const cookies = await chrome.cookies.getAll({});
-  const removals = [];
-
-  for (const cookie of cookies) {
-    const domain = cookieDomain(cookie);
-    if (!domainsRelated(domain, closedHost)) continue;
-
-    // Keep anything covered by either exact entries like example.com or wildcard entries like *.example.com.
-    if (isWhitelisted(domain, whitelist)) continue;
-
-    // Avoid deleting cookies while another related tab is still open.
-    const stillOpen = currentlyOpenHosts.some((host) => domainsRelated(host, domain));
-    if (stillOpen) continue;
-
-    removals.push(deleteCookie(cookie));
+async function rememberOrigin(origin) {
+  if (!origin || !origin.startsWith("http")) {
+    return;
   }
 
-  await Promise.allSettled(removals);
+  const { knownOrigins } = await getState();
+  if (knownOrigins.includes(origin)) {
+    return;
+  }
+
+  const next = [...knownOrigins, origin].slice(-1000);
+  await chrome.storage.local.set({ knownOrigins: next });
 }
 
-async function rememberOpenTabs() {
+async function forgetOrigin(origin) {
+  const { knownOrigins } = await getState();
+  const next = knownOrigins.filter((item) => item !== origin);
+  if (next.length !== knownOrigins.length) {
+    await chrome.storage.local.set({ knownOrigins: next });
+  }
+}
+
+async function clearSiteDataForOrigin(origin) {
+  const { clearSiteData } = await getState();
+  if (!clearSiteData || !origin || !origin.startsWith("http")) {
+    return;
+  }
+
+  try {
+    await chrome.browsingData.remove(
+      { origins: [origin] },
+      {
+        cache: true,
+        cacheStorage: true,
+        cookies: true,
+        fileSystems: true,
+        indexedDB: true,
+        localStorage: true,
+        serviceWorkers: true,
+        webSQL: true
+      }
+    );
+    await forgetOrigin(origin);
+  } catch (error) {
+    console.warn("Failed to clear site data for origin", origin, error);
+  }
+}
+
+function relatedHostnames(a, b) {
+  const first = normalizeDomain(a);
+  const second = normalizeDomain(b);
+
+  if (!first || !second) {
+    return false;
+  }
+
+  const firstBase = getBaseDomain(first);
+  const secondBase = getBaseDomain(second);
+  return firstBase === secondBase;
+}
+
+async function hasRelatedOpenTab(hostname) {
   const tabs = await chrome.tabs.query({});
-  await Promise.all(tabs.map((tab) => rememberTab(tab.id, tab.url || tab.pendingUrl || "")));
+
+  for (const tab of tabs) {
+    const url = parseUrl(tab.url);
+    if (!url || !isHttpUrl(url.href)) {
+      continue;
+    }
+
+    if (relatedHostnames(hostname, url.hostname)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function cleanKnownNonWhitelistedOrigins() {
+  const { whitelist, knownOrigins, clearSiteData } = await getState();
+  if (!clearSiteData) {
+    return;
+  }
+
+  for (const origin of knownOrigins) {
+    const url = parseUrl(origin);
+    if (!url) {
+      continue;
+    }
+
+    const keep = whitelist.some((rule) => hostnameMatchesRule(url.hostname, rule));
+    if (!keep) {
+      await clearSiteDataForOrigin(origin);
+    }
+  }
+}
+
+async function cleanCookiesAndKnownSiteData() {
+  await removeNonWhitelistedCookies();
+  await cleanKnownNonWhitelistedOrigins();
 }
 
 chrome.runtime.onInstalled.addListener(async () => {
-  const data = await chrome.storage.local.get(DEFAULTS);
-  if (!Array.isArray(data.whitelist)) await chrome.storage.local.set(DEFAULTS);
+  const state = await chrome.storage.local.get(DEFAULT_STATE);
+  await chrome.storage.local.set({
+    whitelist: Array.isArray(state.whitelist) ? state.whitelist : DEFAULT_STATE.whitelist,
+    clearSiteData: state.clearSiteData !== false,
+    knownOrigins: Array.isArray(state.knownOrigins) ? state.knownOrigins : DEFAULT_STATE.knownOrigins
+  });
 
-  await rememberOpenTabs();
-  await cleanupAllNonWhitelistedCookies();
+  await cleanCookiesAndKnownSiteData();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  const data = await chrome.storage.local.get(DEFAULTS);
-  if (!Array.isArray(data.whitelist)) await chrome.storage.local.set(DEFAULTS);
-
-  await rememberOpenTabs();
-  await cleanupAllNonWhitelistedCookies();
+  await cleanCookiesAndKnownSiteData();
 });
 
-chrome.tabs.onCreated.addListener((tab) => {
-  if (tab.id && (tab.url || tab.pendingUrl)) rememberTab(tab.id, tab.url || tab.pendingUrl);
-});
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  const url = changeInfo.url || tab.url;
+  if (!isHttpUrl(url)) {
+    return;
+  }
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  const url = changeInfo.url || tab.url || tab.pendingUrl;
-  if (url) rememberTab(tabId, url);
+  tabUrls.set(tabId, url);
+  const parsed = parseUrl(url);
+  if (parsed) {
+    await rememberOrigin(parsed.origin);
+  }
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   try {
     const tab = await chrome.tabs.get(tabId);
-    await rememberTab(tabId, tab.url || tab.pendingUrl || "");
-  } catch {
-    // Tab disappeared before it could be read.
+    if (!isHttpUrl(tab.url)) {
+      return;
+    }
+
+    tabUrls.set(tabId, tab.url);
+    const parsed = parseUrl(tab.url);
+    if (parsed) {
+      await rememberOrigin(parsed.origin);
+    }
+  } catch (_error) {
+    // Ignore tabs that no longer exist.
   }
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  const host = await getRememberedHost(tabId);
-  await forgetTab(tabId);
-  await cleanupForClosedHost(host);
+  const oldUrl = tabUrls.get(tabId);
+  tabUrls.delete(tabId);
+
+  if (!isHttpUrl(oldUrl)) {
+    return;
+  }
+
+  const url = parseUrl(oldUrl);
+  if (!url) {
+    return;
+  }
+
+  const whitelisted = await isDomainWhitelisted(url.hostname);
+  if (whitelisted) {
+    return;
+  }
+
+  const stillOpen = await hasRelatedOpenTab(url.hostname);
+  if (!stillOpen) {
+    await clearSiteDataForOrigin(url.origin);
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  (async () => {
+    if (message?.type === "GET_STATE") {
+      sendResponse(await getState());
+      return;
+    }
+
+    if (message?.type === "SET_CLEAR_SITE_DATA") {
+      await chrome.storage.local.set({ clearSiteData: Boolean(message.value) });
+      sendResponse(await getState());
+      return;
+    }
+
+    if (message?.type === "ADD_WHITELIST") {
+      const { whitelist } = await getState();
+      const next = await setWhitelist([...whitelist, message.rule]);
+      sendResponse({ whitelist: next });
+      return;
+    }
+
+    if (message?.type === "REMOVE_WHITELIST") {
+      const { whitelist } = await getState();
+      const target = normalizeRule(message.rule);
+      const next = await setWhitelist(whitelist.filter((rule) => rule !== target));
+      sendResponse({ whitelist: next });
+      return;
+    }
+
+    if (message?.type === "IMPORT_WHITELIST") {
+      const list = Array.isArray(message.whitelist) ? message.whitelist : [];
+      const next = await setWhitelist(list);
+      sendResponse({ whitelist: next });
+      return;
+    }
+
+    if (message?.type === "CLEAN_NOW") {
+      await cleanCookiesAndKnownSiteData();
+      sendResponse({ ok: true });
+      return;
+    }
+
+    sendResponse({ error: "Unknown message" });
+  })();
+
+  return true;
 });

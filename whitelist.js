@@ -1,165 +1,174 @@
-const DEFAULTS = { whitelist: [] };
-const els = {
-  manualEntry: document.getElementById("manualEntry"),
-  addManual: document.getElementById("addManual"),
-  list: document.getElementById("list"),
-  empty: document.getElementById("empty"),
-  exportList: document.getElementById("exportList"),
-  importList: document.getElementById("importList"),
-  status: document.getElementById("status")
-};
+const ruleInput = document.getElementById("ruleInput");
+const addButton = document.getElementById("addButton");
+const clearSiteDataToggle = document.getElementById("clearSiteDataToggle");
+const groupsEl = document.getElementById("groups");
+const emptyState = document.getElementById("emptyState");
+const exportButton = document.getElementById("exportButton");
+const importInput = document.getElementById("importInput");
+const statusEl = document.getElementById("status");
 
-const COMMON_SECOND_LEVEL_TLDS = new Set([
-  "ac", "co", "com", "edu", "gov", "ltd", "me", "net", "nhs", "org", "plc", "police", "sch"
-]);
+let state = { whitelist: [], clearSiteData: true };
 
-function normalizeHost(host) {
-  return String(host || "")
+function sendMessage(message) {
+  return chrome.runtime.sendMessage(message);
+}
+
+function normalizeRule(rule) {
+  return String(rule || "")
     .trim()
     .toLowerCase()
-    .replace(/^\.+/, "")
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
     .replace(/\.+$/, "");
 }
 
-function normalizeEntry(entry) {
-  let value = String(entry || "").trim().toLowerCase();
-  value = value.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
-  if (value.startsWith("*.")) return "*." + normalizeHost(value.slice(2));
-  return normalizeHost(value);
+function getBaseDomainFromRule(rule) {
+  const clean = normalizeRule(rule).replace(/^\*\./, "");
+  const parts = clean.split(".").filter(Boolean);
+  return parts.length <= 2 ? clean : parts.slice(-2).join(".");
 }
 
-function baseDomainForEntry(entry) {
-  entry = normalizeEntry(entry);
-  const host = entry.startsWith("*.") ? entry.slice(2) : entry;
-  const parts = host.split(".").filter(Boolean);
-
-  if (parts.length <= 2) return host;
-
-  const tld = parts[parts.length - 1];
-  const secondLevel = parts[parts.length - 2];
-  if (tld.length === 2 && COMMON_SECOND_LEVEL_TLDS.has(secondLevel) && parts.length >= 3) {
-    return parts.slice(-3).join(".");
+function isValidRule(rule) {
+  const clean = normalizeRule(rule);
+  if (!clean || clean.includes(" ")) {
+    return false;
   }
 
-  return parts.slice(-2).join(".");
-}
-
-function groupWhitelist(list) {
-  const groups = new Map();
-
-  for (const entry of list) {
-    const base = baseDomainForEntry(entry);
-    if (!groups.has(base)) groups.set(base, []);
-    groups.get(base).push(entry);
-  }
-
-  return [...groups.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([base, entries]) => [base, entries.sort((a, b) => a.localeCompare(b))]);
-}
-
-async function getWhitelist() {
-  const data = await chrome.storage.local.get(DEFAULTS);
-  return Array.isArray(data.whitelist) ? data.whitelist.map(normalizeEntry).filter(Boolean) : [];
-}
-
-async function setWhitelist(list) {
-  const clean = [...new Set(list.map(normalizeEntry).filter(Boolean))].sort();
-  await chrome.storage.local.set({ whitelist: clean });
-  await render();
+  const domain = clean.replace(/^\*\./, "");
+  return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
 }
 
 function setStatus(message) {
-  els.status.textContent = message;
-  window.setTimeout(() => {
-    if (els.status.textContent === message) els.status.textContent = "";
-  }, 2200);
-}
-
-async function addEntry(entry) {
-  entry = normalizeEntry(entry);
-  if (!entry) return setStatus("Enter a domain first.");
-  const list = await getWhitelist();
-  await setWhitelist([...list, entry]);
-  els.manualEntry.value = "";
-  setStatus("Whitelisted " + entry);
-}
-
-async function removeEntry(entry) {
-  const list = await getWhitelist();
-  await setWhitelist(list.filter((item) => item !== entry));
-  setStatus("Removed " + entry);
-}
-
-function appendEntry(entry, parent) {
-  const row = document.createElement("div");
-  row.className = "entry";
-
-  const text = document.createElement("span");
-  text.textContent = entry;
-
-  const remove = document.createElement("button");
-  remove.textContent = "Delist";
-  remove.className = "danger";
-  remove.addEventListener("click", () => removeEntry(entry));
-
-  row.append(text, remove);
-  parent.appendChild(row);
-}
-
-async function render() {
-  const whitelist = await getWhitelist();
-  els.list.textContent = "";
-  els.empty.style.display = whitelist.length ? "none" : "block";
-
-  for (const [base, entries] of groupWhitelist(whitelist)) {
-    const group = document.createElement("div");
-    group.className = "group";
-
-    const title = document.createElement("div");
-    title.className = "groupTitle";
-    title.textContent = base;
-    group.appendChild(title);
-
-    for (const entry of entries) appendEntry(entry, group);
-    els.list.appendChild(group);
+  statusEl.textContent = message;
+  if (message) {
+    setTimeout(() => {
+      if (statusEl.textContent === message) {
+        statusEl.textContent = "";
+      }
+    }, 2500);
   }
 }
 
-els.addManual.addEventListener("click", () => addEntry(els.manualEntry.value));
-els.manualEntry.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") addEntry(els.manualEntry.value);
+function groupedWhitelist() {
+  const groups = new Map();
+
+  for (const rule of state.whitelist) {
+    const base = getBaseDomainFromRule(rule);
+    if (!groups.has(base)) {
+      groups.set(base, []);
+    }
+    groups.get(base).push(rule);
+  }
+
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+function render() {
+  groupsEl.textContent = "";
+  emptyState.classList.toggle("hidden", state.whitelist.length > 0);
+  clearSiteDataToggle.checked = state.clearSiteData !== false;
+
+  for (const [base, rules] of groupedWhitelist()) {
+    const group = document.createElement("section");
+    const heading = document.createElement("h3");
+    const list = document.createElement("ul");
+
+    group.className = "group";
+    heading.textContent = base;
+
+    for (const rule of rules.sort()) {
+      const item = document.createElement("li");
+      const text = document.createElement("span");
+      const button = document.createElement("button");
+
+      text.textContent = rule;
+      button.textContent = "Remove";
+      button.className = "secondary";
+      button.addEventListener("click", async () => {
+        const response = await sendMessage({ type: "REMOVE_WHITELIST", rule });
+        state.whitelist = response.whitelist || [];
+        render();
+        setStatus("Whitelist entry removed.");
+      });
+
+      item.append(text, button);
+      list.append(item);
+    }
+
+    group.append(heading, list);
+    groupsEl.append(group);
+  }
+}
+
+async function addRule() {
+  const rule = normalizeRule(ruleInput.value);
+
+  if (!isValidRule(rule)) {
+    setStatus("Enter a valid domain, such as example.com or *.example.com.");
+    return;
+  }
+
+  const response = await sendMessage({ type: "ADD_WHITELIST", rule });
+  state.whitelist = response.whitelist || [];
+  ruleInput.value = "";
+  render();
+  setStatus(`${rule} added.`);
+}
+
+async function load() {
+  state = await sendMessage({ type: "GET_STATE" });
+  render();
+}
+
+addButton.addEventListener("click", addRule);
+ruleInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    addRule();
+  }
 });
 
-els.exportList.addEventListener("click", async () => {
-  const whitelist = await getWhitelist();
-  const blob = new Blob([JSON.stringify({ whitelist }, null, 2)], { type: "application/json" });
+clearSiteDataToggle.addEventListener("change", async () => {
+  state = await sendMessage({
+    type: "SET_CLEAR_SITE_DATA",
+    value: clearSiteDataToggle.checked
+  });
+  render();
+  setStatus(clearSiteDataToggle.checked ? "Site data cleanup enabled." : "Site data cleanup disabled.");
+});
+
+exportButton.addEventListener("click", () => {
+  const data = JSON.stringify({ whitelist: state.whitelist }, null, 2);
+  const blob = new Blob([data], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = "burned-cookies-whitelist.json";
   link.click();
   URL.revokeObjectURL(url);
-  setStatus("Exported whitelist.");
+  setStatus("Whitelist exported.");
 });
 
-els.importList.addEventListener("change", async () => {
-  const file = els.importList.files && els.importList.files[0];
-  if (!file) return;
+importInput.addEventListener("change", async () => {
+  const file = importInput.files?.[0];
+  if (!file) {
+    return;
+  }
 
   try {
     const text = await file.text();
-    const parsed = JSON.parse(text);
-    const imported = Array.isArray(parsed) ? parsed : parsed.whitelist;
-    if (!Array.isArray(imported)) throw new Error("Expected an array or { whitelist: [] }.");
-    const current = await getWhitelist();
-    await setWhitelist([...current, ...imported]);
-    setStatus("Imported whitelist.");
-  } catch (error) {
-    setStatus("Import failed: " + error.message);
+    const data = JSON.parse(text);
+    const response = await sendMessage({
+      type: "IMPORT_WHITELIST",
+      whitelist: Array.isArray(data.whitelist) ? data.whitelist : []
+    });
+    state.whitelist = response.whitelist || [];
+    render();
+    setStatus("Whitelist imported.");
+  } catch (_error) {
+    setStatus("Import failed. Use a JSON file with a whitelist array.");
   } finally {
-    els.importList.value = "";
+    importInput.value = "";
   }
 });
 
-render();
+load();

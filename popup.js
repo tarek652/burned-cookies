@@ -1,207 +1,187 @@
-const DEFAULTS = { whitelist: [] };
-const els = {
-  currentHost: document.getElementById("currentHost"),
-  addExact: document.getElementById("addExact"),
-  addWildcard: document.getElementById("addWildcard"),
-  manualEntry: document.getElementById("manualEntry"),
-  addManual: document.getElementById("addManual"),
-  listTitle: document.getElementById("listTitle"),
-  openFullList: document.getElementById("openFullList"),
-  list: document.getElementById("list"),
-  empty: document.getElementById("empty"),
-  exportList: document.getElementById("exportList"),
-  importList: document.getElementById("importList"),
-  status: document.getElementById("status")
-};
+const currentDomainEl = document.getElementById("currentDomain");
+const addExactButton = document.getElementById("addExactButton");
+const addWildcardButton = document.getElementById("addWildcardButton");
+const clearSiteDataToggle = document.getElementById("clearSiteDataToggle");
+const cleanNowButton = document.getElementById("cleanNowButton");
+const matchingList = document.getElementById("matchingList");
+const emptyMatching = document.getElementById("emptyMatching");
+const exportButton = document.getElementById("exportButton");
+const importInput = document.getElementById("importInput");
+const statusEl = document.getElementById("status");
 
-let currentHost = "";
+let currentHostname = "";
+let currentBaseDomain = "";
+let state = { whitelist: [], clearSiteData: true };
 
-function normalizeHost(host) {
-  return String(host || "")
+function sendMessage(message) {
+  return chrome.runtime.sendMessage(message);
+}
+
+function normalizeDomain(domain) {
+  return String(domain || "")
     .trim()
     .toLowerCase()
     .replace(/^\.+/, "")
     .replace(/\.+$/, "");
 }
 
-function normalizeEntry(entry) {
-  let value = String(entry || "").trim().toLowerCase();
-  value = value.replace(/^https?:\/\//, "").split("/")[0].split(":")[0];
-  if (value.startsWith("*.")) return "*." + normalizeHost(value.slice(2));
-  return normalizeHost(value);
+function getBaseDomain(domain) {
+  const parts = normalizeDomain(domain).split(".").filter(Boolean);
+  return parts.length <= 2 ? parts.join(".") : parts.slice(-2).join(".");
 }
 
+function hostnameMatchesRule(hostname, rule) {
+  const host = normalizeDomain(hostname);
+  const cleanRule = String(rule || "").trim().toLowerCase();
 
-const COMMON_SECOND_LEVEL_TLDS = new Set([
-  "ac", "co", "com", "edu", "gov", "ltd", "me", "net", "nhs", "org", "plc", "police", "sch"
-]);
-
-function baseDomainForEntry(entry) {
-  entry = normalizeEntry(entry);
-  const host = entry.startsWith("*.") ? entry.slice(2) : entry;
-  const parts = host.split(".").filter(Boolean);
-
-  if (parts.length <= 2) return host;
-
-  const tld = parts[parts.length - 1];
-  const secondLevel = parts[parts.length - 2];
-  if (tld.length === 2 && COMMON_SECOND_LEVEL_TLDS.has(secondLevel) && parts.length >= 3) {
-    return parts.slice(-3).join(".");
+  if (cleanRule.startsWith("*.")) {
+    const base = cleanRule.slice(2);
+    return host === base || host.endsWith(`.${base}`);
   }
 
-  return parts.slice(-2).join(".");
-}
-
-function groupWhitelist(list) {
-  const groups = new Map();
-
-  for (const entry of list) {
-    const base = baseDomainForEntry(entry);
-    if (!groups.has(base)) groups.set(base, []);
-    groups.get(base).push(entry);
-  }
-
-  return [...groups.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([base, entries]) => [base, entries.sort((a, b) => a.localeCompare(b))]);
-}
-
-function appendWhitelistItem(entry, parent) {
-  const li = document.createElement("li");
-  const text = document.createElement("span");
-  const remove = document.createElement("button");
-  text.textContent = entry;
-  remove.textContent = "Delist";
-  remove.className = "danger";
-  remove.addEventListener("click", () => removeEntry(entry));
-  li.append(text, remove);
-  parent.appendChild(li);
-}
-
-function wildcardForHost(host) {
-  host = normalizeHost(host);
-  if (!host) return "";
-  return "*." + baseDomainForEntry(host);
-}
-
-function entryMatchesHost(entry, host) {
-  entry = normalizeEntry(entry);
-  host = normalizeHost(host);
-  if (!entry || !host) return false;
-
-  if (entry.startsWith("*.")) {
-    const base = entry.slice(2);
-    return host === base || host.endsWith("." + base);
-  }
-
-  return host === entry;
-}
-
-async function getWhitelist() {
-  const data = await chrome.storage.local.get(DEFAULTS);
-  return Array.isArray(data.whitelist) ? data.whitelist.map(normalizeEntry).filter(Boolean) : [];
-}
-
-async function setWhitelist(list) {
-  const clean = [...new Set(list.map(normalizeEntry).filter(Boolean))].sort();
-  await chrome.storage.local.set({ whitelist: clean });
-  await render();
+  return host === cleanRule;
 }
 
 function setStatus(message) {
-  els.status.textContent = message;
-  window.setTimeout(() => {
-    if (els.status.textContent === message) els.status.textContent = "";
-  }, 1800);
+  statusEl.textContent = message;
+  if (message) {
+    setTimeout(() => {
+      if (statusEl.textContent === message) {
+        statusEl.textContent = "";
+      }
+    }, 2500);
+  }
 }
 
-async function addEntry(entry) {
-  entry = normalizeEntry(entry);
-  if (!entry) return setStatus("Enter a domain first.");
-  const list = await getWhitelist();
-  await setWhitelist([...list, entry]);
-  els.manualEntry.value = "";
-  setStatus("Whitelisted " + entry);
-}
-
-async function removeEntry(entry) {
-  const list = await getWhitelist();
-  await setWhitelist(list.filter((item) => item !== entry));
-  setStatus("Removed " + entry);
-}
-
-async function render() {
-  const fullList = await getWhitelist();
-  const visibleList = fullList.filter((entry) => entryMatchesHost(entry, currentHost));
-
-  els.listTitle.textContent = "Whitelist for current domain";
-  els.empty.textContent = currentHost
-    ? "Nothing whitelisted for this domain."
-    : "Open a website tab to see matching whitelist entries.";
-
-  els.list.textContent = "";
-  els.empty.style.display = visibleList.length ? "none" : "block";
-
-  for (const entry of visibleList) appendWhitelistItem(entry, els.list);
-}
-
-async function detectCurrentHost() {
+async function getCurrentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+function renderMatchingList() {
+  matchingList.textContent = "";
+
+  const matching = state.whitelist.filter((rule) => hostnameMatchesRule(currentHostname, rule));
+  emptyMatching.classList.toggle("hidden", matching.length > 0);
+
+  for (const rule of matching) {
+    const item = document.createElement("li");
+    const text = document.createElement("span");
+    const removeButton = document.createElement("button");
+
+    text.textContent = rule;
+    removeButton.textContent = "Remove";
+    removeButton.className = "secondary";
+    removeButton.addEventListener("click", async () => {
+      const response = await sendMessage({ type: "REMOVE_WHITELIST", rule });
+      state.whitelist = response.whitelist || [];
+      renderMatchingList();
+      setStatus("Whitelist entry removed.");
+    });
+
+    item.append(text, removeButton);
+    matchingList.append(item);
+  }
+}
+
+async function load() {
+  const tab = await getCurrentTab();
+
   try {
     const url = new URL(tab.url || "");
-    if (url.protocol === "http:" || url.protocol === "https:") currentHost = normalizeHost(url.hostname);
-  } catch {
-    currentHost = "";
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      currentHostname = normalizeDomain(url.hostname);
+      currentBaseDomain = getBaseDomain(currentHostname);
+      currentDomainEl.textContent = currentHostname;
+      addExactButton.disabled = false;
+      addWildcardButton.disabled = false;
+    } else {
+      currentDomainEl.textContent = "This page cannot be whitelisted.";
+      addExactButton.disabled = true;
+      addWildcardButton.disabled = true;
+    }
+  } catch (_error) {
+    currentDomainEl.textContent = "This page cannot be whitelisted.";
+    addExactButton.disabled = true;
+    addWildcardButton.disabled = true;
   }
 
-  els.currentHost.textContent = currentHost || "No website tab selected";
-  els.addExact.disabled = !currentHost;
-  els.addWildcard.disabled = !currentHost;
+  state = await sendMessage({ type: "GET_STATE" });
+  clearSiteDataToggle.checked = state.clearSiteData !== false;
+  renderMatchingList();
 }
 
-els.addExact.addEventListener("click", () => addEntry(currentHost));
-els.addWildcard.addEventListener("click", () => addEntry(wildcardForHost(currentHost)));
-els.addManual.addEventListener("click", () => addEntry(els.manualEntry.value));
-els.manualEntry.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") addEntry(els.manualEntry.value);
+addExactButton.addEventListener("click", async () => {
+  if (!currentHostname) {
+    return;
+  }
+
+  const response = await sendMessage({ type: "ADD_WHITELIST", rule: currentHostname });
+  state.whitelist = response.whitelist || [];
+  renderMatchingList();
+  setStatus(`${currentHostname} added.`);
 });
 
-els.openFullList.addEventListener("click", () => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("whitelist.html") });
+addWildcardButton.addEventListener("click", async () => {
+  if (!currentBaseDomain) {
+    return;
+  }
+
+  const rule = `*.${currentBaseDomain}`;
+  const response = await sendMessage({ type: "ADD_WHITELIST", rule });
+  state.whitelist = response.whitelist || [];
+  renderMatchingList();
+  setStatus(`${rule} added.`);
 });
 
-els.exportList.addEventListener("click", async () => {
-  const whitelist = await getWhitelist();
-  const blob = new Blob([JSON.stringify({ whitelist }, null, 2)], { type: "application/json" });
+clearSiteDataToggle.addEventListener("change", async () => {
+  state = await sendMessage({
+    type: "SET_CLEAR_SITE_DATA",
+    value: clearSiteDataToggle.checked
+  });
+  setStatus(clearSiteDataToggle.checked ? "Site data cleanup enabled." : "Site data cleanup disabled.");
+});
+
+cleanNowButton.addEventListener("click", async () => {
+  cleanNowButton.disabled = true;
+  await sendMessage({ type: "CLEAN_NOW" });
+  cleanNowButton.disabled = false;
+  setStatus("Cleanup complete.");
+});
+
+exportButton.addEventListener("click", () => {
+  const data = JSON.stringify({ whitelist: state.whitelist }, null, 2);
+  const blob = new Blob([data], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = "burned-cookies-whitelist.json";
   link.click();
   URL.revokeObjectURL(url);
-  setStatus("Exported whitelist.");
+  setStatus("Whitelist exported.");
 });
 
-els.importList.addEventListener("change", async () => {
-  const file = els.importList.files && els.importList.files[0];
-  if (!file) return;
+importInput.addEventListener("change", async () => {
+  const file = importInput.files?.[0];
+  if (!file) {
+    return;
+  }
 
   try {
     const text = await file.text();
-    const parsed = JSON.parse(text);
-    const imported = Array.isArray(parsed) ? parsed : parsed.whitelist;
-    if (!Array.isArray(imported)) throw new Error("Expected an array or { whitelist: [] }.");
-    const current = await getWhitelist();
-    await setWhitelist([...current, ...imported]);
-    setStatus("Imported whitelist.");
-  } catch (error) {
-    setStatus("Import failed: " + error.message);
+    const data = JSON.parse(text);
+    const response = await sendMessage({
+      type: "IMPORT_WHITELIST",
+      whitelist: Array.isArray(data.whitelist) ? data.whitelist : []
+    });
+    state.whitelist = response.whitelist || [];
+    renderMatchingList();
+    setStatus("Whitelist imported.");
+  } catch (_error) {
+    setStatus("Import failed. Use a JSON file with a whitelist array.");
   } finally {
-    els.importList.value = "";
+    importInput.value = "";
   }
 });
 
-(async function init() {
-  await detectCurrentHost();
-  await render();
-})();
+load();

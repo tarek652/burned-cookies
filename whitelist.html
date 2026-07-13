@@ -1,44 +1,61 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Burned Cookies Whitelist</title>
   <link rel="stylesheet" href="whitelist.css">
 </head>
 <body>
-  <main>
-    <div class="card">
-      <header>
-        <div>
-          <h1>Burned Cookies Whitelist</h1>
-          <p class="muted">All whitelisted domains grouped by base domain.</p>
-        </div>
-        <div class="buttonRow">
-          <button id="exportList" class="secondary">Export</button>
-          <label class="importButton secondary">
-            Import
-            <input id="importList" type="file" accept="application/json,.json">
+  <main class="page">
+    <header class="hero">
+      <div>
+        <h1>Burned Cookies whitelist</h1>
+        <p>Manage domains that should keep cookies and site data.</p>
+      </div>
+      <img src="icons/icon128.png" alt="" class="logo">
+    </header>
+
+    <section class="card add-card">
+      <label for="ruleInput">Add exact or wildcard domain</label>
+      <div class="input-row">
+        <input id="ruleInput" type="text" placeholder="example.com or *.example.com">
+        <button id="addButton" type="button">Add</button>
+      </div>
+      <p class="hint">Exact entries match only that hostname. Wildcard entries match the base domain and its subdomains.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <h2>Settings</h2>
+      </div>
+      <label class="toggle-row">
+        <input type="checkbox" id="clearSiteDataToggle">
+        <span>
+          <strong>Also clear site data</strong>
+          <small>Default on. Removes localStorage, IndexedDB, Cache Storage, service workers, cache, and more for non-whitelisted sites.</small>
+        </span>
+      </label>
+    </section>
+
+    <section class="card">
+      <div class="section-header">
+        <h2>Whitelist</h2>
+        <div class="actions">
+          <button id="exportButton" type="button" class="secondary">Export JSON</button>
+          <label class="file-button secondary">
+            Import JSON
+            <input id="importInput" type="file" accept="application/json,.json">
           </label>
         </div>
-      </header>
-
-      <div class="content">
-        <label for="manualEntry">Add exact domain or wildcard</label>
-        <div class="inputRow">
-          <input id="manualEntry" placeholder="example.com or *.example.com">
-          <button id="addManual" class="primary">Add</button>
-        </div>
-
-        <section>
-          <h2>Full whitelist</h2>
-          <div id="list"></div>
-          <p id="empty" class="muted">No domains whitelisted.</p>
-        </section>
-
-        <p id="status" role="status"></p>
       </div>
-    </div>
+      <div id="groups" class="groups"></div>
+      <p id="emptyState" class="empty hidden">No whitelist entries yet.</p>
+    </section>
+
+    <p id="status" class="status" role="status"></p>
   </main>
+
   <script src="whitelist.js"></script>
 </body>
 </html>
